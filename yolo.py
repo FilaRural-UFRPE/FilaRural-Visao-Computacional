@@ -3,7 +3,7 @@ from ultralytics import YOLO as YOLO_MODEL
 
 class Yolo:
     def __init__(self):
-        self.model = YOLO_MODEL("yolov8n.pt") # Modelo
+        self.model = YOLO_MODEL("yolov8x.pt") # Modelo
 
         self.filepath = None
         self.image = None
@@ -56,7 +56,7 @@ class Yolo:
         except:
             return 1
         
-    def get_num_of_people(self):
+    def get_num_of_people(self) -> int:
         """
         Retorna o número de pessoas encontradas na imagem.
         """

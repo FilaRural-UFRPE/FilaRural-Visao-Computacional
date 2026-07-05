@@ -3,7 +3,7 @@ from ultralytics import YOLO as YOLO_MODEL
 
 class Yolo:
     def __init__(self):
-        self.model = YOLO_MODEL("yolov8x.pt") # Modelo
+        self.model = YOLO_MODEL("yolov8s.pt") # Modelo
 
         self.filepath = None
         self.image = None

@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 class Yolo:
-    def __init__(self, model_path: str = "yolov8s.pt"):
+    def __init__(self, model_path: str = "yolov8n.pt"):
         # O modelo deve ser carregado UMA vez (idealmente na inicialização da API,
         # não a cada requisição) e reutilizado entre chamadas.
         self.model = YOLO_MODEL(model_path)

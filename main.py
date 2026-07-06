@@ -1,9 +1,10 @@
 import sys
 import os
 import shutil
+import uuid
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
-from yolo_onnx import YoloONNX
+from yolo import YoloONNX
 
 app = FastAPI(
     title="FilaRural — Visão Computacional (ONNX)",
@@ -12,7 +13,7 @@ app = FastAPI(
 )
 
 # Carrega o modelo uma vez ao arrancar
-MODEL_PATH = os.environ.get("MODEL_PATH", "yolov8s.onnx")
+MODEL_PATH = os.environ.get("MODEL_PATH", "yolov8n.onnx")
 yolo = YoloONNX(model_path=MODEL_PATH)
 
 
@@ -53,7 +54,10 @@ async def analyze(file: UploadFile = File(...)):
     - Tempo de espera estimado (minutos)
     - Classificação da fila (vazia, pequena, média, grande)
     """
-    temp_path = f"temp_{file.filename}"
+    original_ext = os.path.splitext(file.filename or "")[1].lower()
+    if original_ext not in {".jpg", ".jpeg", ".png", ".webp", ".bmp"}:
+        original_ext = ".jpg"
+    temp_path = f"temp_{uuid.uuid4().hex}{original_ext}"
     try:
         with open(temp_path, "wb") as f:
             shutil.copyfileobj(file.file, f)

@@ -15,7 +15,7 @@ class YoloONNX:
     NMS_THRESHOLD  = 0.5  # threshold para Non-Maximum Suppression
     PERSON_CLASS   = 0    # classe 0 = pessoa no COCO dataset
 
-    def __init__(self, model_path: str = "yolov8s.onnx"):
+    def __init__(self, model_path: str = "yolov8n.onnx"):
         self.session = ort.InferenceSession(
             model_path,
             providers=["CPUExecutionProvider"]

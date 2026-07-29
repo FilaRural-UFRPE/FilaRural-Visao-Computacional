@@ -30,11 +30,11 @@ app.add_middleware(
 MODEL_PATH = os.environ.get("MODEL_PATH", "yolov8n.onnx")
 yolo = YoloONNX(model_path=MODEL_PATH)
 
-POSTGRES_HOST     = os.environ.get("POSTGRES_HOST", "")
-POSTGRES_PORT     = int(os.environ.get("POSTGRES_PORT", 5432))
-POSTGRES_DB       = os.environ.get("POSTGRES_DB", "")
-POSTGRES_USER     = os.environ.get("POSTGRES_USER", "")
-POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "")
+POSTGRES_HOST     = os.environ.get("SUPABASE_HOST", "")
+POSTGRES_PORT     = int(os.environ.get("SUPABASE_PORT", 5432))
+POSTGRES_DB       = os.environ.get("SUPABASE_DB", "postgres")
+POSTGRES_USER     = os.environ.get("SUPABASE_USER", "")
+POSTGRES_PASSWORD = os.environ.get("SUPABASE_PASSWORD", "")
 
 
 def get_connection():

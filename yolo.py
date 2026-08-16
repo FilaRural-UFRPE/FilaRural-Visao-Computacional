@@ -1,3 +1,4 @@
+import os
 import cv2
 import numpy as np
 import onnxruntime as ort
@@ -11,9 +12,18 @@ class YoloONNX:
     # Parâmetros do modelo YOLOv8
     INPUT_WIDTH  = 640
     INPUT_HEIGHT = 640
-    CONF_THRESHOLD = 0.4  # confiança mínima para detetar pessoa
+
+    # Baixado de 0.4 para 0.2: na imagem real da câmera do RU as pessoas
+    # aparecem pequenas e distantes, e o threshold de 0.4 estava descartando
+    # detecções válidas (fila cheia sendo lida como zero pessoas).
+    CONF_THRESHOLD = float(os.environ.get("YOLO_CONF_THRESHOLD", "0.2"))
     NMS_THRESHOLD  = 0.5  # threshold para Non-Maximum Suppression
     PERSON_CLASS   = 0    # classe 0 = pessoa no COCO dataset
+
+    # A câmera do RU entrega o frame invertido (180°) — confirmado testando
+    # com uma imagem real. Corrigido aqui antes da inferência, e configurável
+    # por env var caso a câmera mude no futuro (setar para "0" desativa).
+    ROTATE_DEGREES = int(os.environ.get("CAMERA_ROTATE_DEGREES", "180"))
 
     def __init__(self, model_path: str = "yolov8n.onnx"):
         self.session = ort.InferenceSession(
@@ -88,9 +98,19 @@ class YoloONNX:
         """
         try:
             self.filepath = filepath
-            self.image    = cv2.imread(filepath)
-            if self.image is None:
+            image = cv2.imread(filepath)
+            if image is None:
                 return 1
+
+            # Corrige a rotação da câmera antes de detectar
+            if self.ROTATE_DEGREES == 180:
+                image = cv2.rotate(image, cv2.ROTATE_180)
+            elif self.ROTATE_DEGREES == 90:
+                image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+            elif self.ROTATE_DEGREES == 270:
+                image = cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+            self.image = image
 
             blob, scale, orig_size = self._preprocess(self.image)
             outputs = self.session.run(None, {self.input_name: blob})

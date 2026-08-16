@@ -8,13 +8,14 @@ Pode ser um PC, notebook ou Raspberry Pi ligado 24/7 no RU.
 
 Como usar:
     pip install opencv-python-headless requests
+    export RTSP_PASSWORD="sua_senha_aqui"
+    export RTSP_IP="192.168.1.50"
     python capture_and_analyze.py
 """
-
+import os
 import time
 import logging
 from datetime import datetime
-
 import cv2
 import requests
 
@@ -22,19 +23,28 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURAÇÃO --------------------------------------------------------
+# Credenciais lidas de variáveis de ambiente — nunca hardcoded, já que este
+# repositório é público no GitHub. Configure via .env local (fora do
+# controle de versão) ou diretamente no ambiente do serviço/systemd que
+# roda este script 24/7.
+RTSP_USER = os.environ.get("RTSP_USER", "admin")
+RTSP_PASSWORD = os.environ.get("RTSP_PASSWORD", "")
+RTSP_IP = os.environ.get("RTSP_IP", "")
+RTSP_PORT = int(os.environ.get("RTSP_PORT", 554))
 
-# Monte a URL a partir dos dados obtidos no app Mibo Smart (ver Configurações
-# avançadas > Redes > Informações de rede, e a chave de acesso da câmera).
-RTSP_USER = "admin"
-RTSP_PASSWORD = "SUA_SENHA_AQUI"
-RTSP_IP = "SEU_IP_AQUI"          # ex: 192.168.1.50
-RTSP_PORT = 554                   # porta RTSP anotada no app
+if not RTSP_PASSWORD or not RTSP_IP:
+    logger.error(
+        "RTSP_PASSWORD e RTSP_IP precisam estar definidos como variáveis de "
+        "ambiente antes de rodar este script."
+    )
+    raise SystemExit(1)
+
 RTSP_URL = f"rtsp://{RTSP_USER}:{RTSP_PASSWORD}@{RTSP_IP}:{RTSP_PORT}/cam/realmonitor?channel=1&subtype=0"
 
-API_URL = "https://filarural-visao-computacional-1.onrender.com/analyze"
-
-CAPTURE_INTERVAL_SECONDS = 5 * 60  # captura a cada 5 minutos — ajuste conforme necessário
-
+API_URL = os.environ.get(
+    "API_URL", "https://filarural-visao-computacional-1.onrender.com/analyze"
+)
+CAPTURE_INTERVAL_SECONDS = int(os.environ.get("CAPTURE_INTERVAL_SECONDS", 5 * 60))  # a cada 5 minutos
 # --------------------------------------------------------------------------
 
 
@@ -59,7 +69,12 @@ def capture_frame(rtsp_url: str) -> "cv2.typing.MatLike | None":
 
 
 def send_to_api(frame, api_url: str) -> dict | None:
-    """Envia o frame capturado para a API de análise e retorna o resultado."""
+    """Envia o frame capturado para a API de análise e retorna o resultado.
+
+    Observação: a rotação do frame (a câmera entrega invertido, 180°) é
+    corrigida do lado do servidor, dentro de yolo.py — não é preciso rotacionar
+    aqui antes de enviar.
+    """
     success, buffer = cv2.imencode(".jpg", frame)
     if not success:
         logger.error("Falha ao codificar o frame como JPEG.")
@@ -78,29 +93,27 @@ def send_to_api(frame, api_url: str) -> dict | None:
 def run_once():
     logger.info("Capturando frame da câmera...")
     frame = capture_frame(RTSP_URL)
-
     if frame is None:
         logger.error("Captura falhou — pulando este ciclo.")
         return
 
     logger.info("Frame capturado, enviando para a API...")
     result = send_to_api(frame, API_URL)
-
     if result is None:
         logger.error("Análise falhou — pulando este ciclo.")
         return
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logger.info(
-        "[%s] %s | %s pessoas | ~%s min de espera",
+        "[%s] %s | %s pessoas | ~%s min de espera | salvo no banco: %s",
         timestamp,
         result.get("status"),
         result.get("people_in_line"),
         result.get("waiting_time_minutes"),
+        result.get("db_saved"),
     )
-    # TODO: aqui é onde o resultado deve ser salvo/enviado para onde o
-    # frontend/dashboard vai ler (ex: banco de dados, planilha, outro
-    # endpoint da própria aplicação FilaRural).
+    # O resultado já é persistido pela própria API (/analyze -> queue_status
+    # no Postgres), que é de onde o frontend/dashboard lê via /queue/status.
 
 
 def main():

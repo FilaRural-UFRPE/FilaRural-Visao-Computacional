@@ -1,18 +1,19 @@
 """
 Script para exportar o modelo YOLOv8n (nano) para ONNX.
-Executa UMA VEZ localmente antes de fazer deploy:
 
+Executa UMA VEZ localmente antes de fazer deploy:
     pip install ultralytics
     python export_to_onnx.py
 
 Isso gera o ficheiro yolov8n.onnx que deves adicionar ao repositório
-(substituindo o yolov8s.onnx) ou guardar num bucket S3/GCS para o Render
-descarregar.
+ou guardar num bucket S3/GCS para o Render descarregar.
 
-Por que trocar de "s" para "n": o modelo "small" consome bem mais RAM e CPU
-durante a inferência que o "nano", o que estava causando OOM/timeout no
-plano gratuito do Render (512MB RAM / 0.1 CPU). O nano é a opção
-recomendada pela própria Ultralytics para ambientes com poucos recursos.
+Por que o nano ("n") e não o "small" ou "medium": o "small" consome bem mais
+RAM e CPU durante a inferência, o que causava OOM/timeout no plano gratuito
+do Render (512MB RAM / 0.1 CPU). O nano é a opção recomendada pela própria
+Ultralytics para ambientes com poucos recursos — e, combinado com a correção
+de rotação e o threshold de confiança ajustado em yolo.py, já é suficiente
+para o cenário real da câmera do RU.
 """
 from ultralytics import YOLO
 

@@ -57,6 +57,16 @@ class YoloONNX:
         orig_w, orig_h = orig_size
         predictions = outputs[0][0].T  # (8400, 84)
 
+        # --- DEBUG TEMPORÁRIO: loga as maiores confidências de "pessoa" ---
+        # encontradas em TODA a imagem, mesmo abaixo do threshold. Remover
+        # depois de diagnosticar por que /analyze está retornando zero.
+        person_confidences = predictions[:, 4 + self.PERSON_CLASS]
+        top5 = np.sort(person_confidences)[::-1][:5]
+        print(f"[DEBUG] Top 5 confidências de 'person' nesta imagem: {top5.tolist()}", flush=True)
+        print(f"[DEBUG] CONF_THRESHOLD atual: {self.CONF_THRESHOLD}", flush=True)
+        print(f"[DEBUG] ROTATE_DEGREES atual: {self.ROTATE_DEGREES}", flush=True)
+        # --- fim do debug temporário ---
+
         boxes, scores = [], []
         for pred in predictions:
             class_scores = pred[4:]

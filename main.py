@@ -27,6 +27,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mantido em "yolov8n.onnx" (nano): o "small" causava OOM/timeout no plano
+# gratuito do Render (512MB RAM / 0.1 CPU). A causa real do bug era a
+# imagem chegando invertida (180°) e o threshold de confiança alto demais
+# — ambos corrigidos em yolo.py — então o nano deve resolver sem precisar
+# de mais recursos.
 MODEL_PATH = os.environ.get("MODEL_PATH", "yolov8n.onnx")
 yolo = YoloONNX(model_path=MODEL_PATH)
 

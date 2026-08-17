@@ -189,12 +189,19 @@ def queue_status():
         age_minutes = (datetime.utcnow() - row["captured_at"].replace(tzinfo=None)).total_seconds() / 60
         is_stale = age_minutes > 20
 
+        # captured_at vem em UTC do banco; converte para o horário de
+        # Recife (UTC-3) antes de devolver, para não confundir quem for
+        # ler esse campo diretamente (o cálculo de age_minutes acima já
+        # usa UTC dos dois lados, então ele continua correto sem mudança).
+        from datetime import timedelta
+        captured_at_local = row["captured_at"].replace(tzinfo=None) - timedelta(hours=3)
+
         return {
             "available":            True,
             "people_in_line":       row["people_in_line"],
             "status":               row["status"],
             "waiting_time_minutes": row["waiting_time_minutes"],
-            "captured_at":          row["captured_at"].isoformat(),
+            "captured_at":          captured_at_local.isoformat(),
             "is_stale":             is_stale,
             "age_minutes":          round(age_minutes, 1),
         }

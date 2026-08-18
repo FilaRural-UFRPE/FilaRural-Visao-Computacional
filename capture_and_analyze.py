@@ -52,16 +52,22 @@ RTSP_READ_TIMEOUT_MS = int(os.environ.get("RTSP_READ_TIMEOUT_MS", 15_000))
 
 def capture_frame(rtsp_url: str) -> "cv2.typing.MatLike | None":
     """Conecta na câmera, captura um único frame e fecha a conexão."""
-    cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
     # Evita que uma perda de rede deixe o processo vivo, porém travado para
     # sempre dentro do FFmpeg. Backends antigos do OpenCV podem ignorar estas
     # propriedades; nesse caso o comportamento anterior é preservado.
     open_timeout_property = getattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC", None)
     read_timeout_property = getattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC", None)
+    capture_params = []
     if open_timeout_property is not None:
-        cap.set(open_timeout_property, RTSP_OPEN_TIMEOUT_MS)
+        capture_params.extend((open_timeout_property, RTSP_OPEN_TIMEOUT_MS))
     if read_timeout_property is not None:
-        cap.set(read_timeout_property, RTSP_READ_TIMEOUT_MS)
+        capture_params.extend((read_timeout_property, RTSP_READ_TIMEOUT_MS))
+
+    try:
+        cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG, capture_params)
+    except (TypeError, cv2.error):
+        logger.warning("OpenCV sem suporte a timeouts RTSP na abertura; usando modo compatível.")
+        cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
     if not cap.isOpened():
         logger.error("Não foi possível conectar à câmera RTSP.")
         return None

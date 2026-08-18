@@ -45,12 +45,29 @@ API_URL = os.environ.get(
     "API_URL", "https://filarural-visao-computacional-1.onrender.com/analyze"
 )
 CAPTURE_INTERVAL_SECONDS = int(os.environ.get("CAPTURE_INTERVAL_SECONDS", 5 * 60))  # a cada 5 minutos
+RTSP_OPEN_TIMEOUT_MS = int(os.environ.get("RTSP_OPEN_TIMEOUT_MS", 15_000))
+RTSP_READ_TIMEOUT_MS = int(os.environ.get("RTSP_READ_TIMEOUT_MS", 15_000))
 # --------------------------------------------------------------------------
 
 
 def capture_frame(rtsp_url: str) -> "cv2.typing.MatLike | None":
     """Conecta na câmera, captura um único frame e fecha a conexão."""
-    cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+    # Evita que uma perda de rede deixe o processo vivo, porém travado para
+    # sempre dentro do FFmpeg. Backends antigos do OpenCV podem ignorar estas
+    # propriedades; nesse caso o comportamento anterior é preservado.
+    open_timeout_property = getattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC", None)
+    read_timeout_property = getattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC", None)
+    capture_params = []
+    if open_timeout_property is not None:
+        capture_params.extend((open_timeout_property, RTSP_OPEN_TIMEOUT_MS))
+    if read_timeout_property is not None:
+        capture_params.extend((read_timeout_property, RTSP_READ_TIMEOUT_MS))
+
+    try:
+        cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG, capture_params)
+    except (TypeError, cv2.error):
+        logger.warning("OpenCV sem suporte a timeouts RTSP na abertura; usando modo compatível.")
+        cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
     if not cap.isOpened():
         logger.error("Não foi possível conectar à câmera RTSP.")
         return None
@@ -90,18 +107,18 @@ def send_to_api(frame, api_url: str) -> dict | None:
         return None
 
 
-def run_once():
+def run_once() -> bool:
     logger.info("Capturando frame da câmera...")
     frame = capture_frame(RTSP_URL)
     if frame is None:
         logger.error("Captura falhou — pulando este ciclo.")
-        return
+        return False
 
     logger.info("Frame capturado, enviando para a API...")
     result = send_to_api(frame, API_URL)
     if result is None:
         logger.error("Análise falhou — pulando este ciclo.")
-        return
+        return False
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logger.info(
@@ -114,12 +131,30 @@ def run_once():
     )
     # O resultado já é persistido pela própria API (/analyze -> queue_status
     # no Postgres), que é de onde o frontend/dashboard lê via /queue/status.
+    return bool(result.get("db_saved"))
 
 
 def main():
     logger.info("Iniciando captura periódica a cada %s segundos...", CAPTURE_INTERVAL_SECONDS)
+    consecutive_failures = 0
     while True:
-        run_once()
+        try:
+            if run_once():
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+        except Exception:
+            # Uma exceção inesperada não deve matar silenciosamente o agente
+            # de captura que precisa permanecer ligado no RU.
+            consecutive_failures += 1
+            logger.exception("Falha inesperada no ciclo de captura")
+
+        if consecutive_failures:
+            logger.warning(
+                "Capturador está há %s ciclo(s) consecutivo(s) sem salvar uma leitura.",
+                consecutive_failures,
+            )
+        logger.info("Próxima captura em %s segundos.", CAPTURE_INTERVAL_SECONDS)
         time.sleep(CAPTURE_INTERVAL_SECONDS)
 
 

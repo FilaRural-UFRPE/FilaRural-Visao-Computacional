@@ -40,6 +40,7 @@ POSTGRES_PORT     = int(os.environ.get("SUPABASE_PORT", 5432))
 POSTGRES_DB       = os.environ.get("SUPABASE_DB", "postgres").strip()
 POSTGRES_USER     = os.environ.get("SUPABASE_USER", "").strip()
 POSTGRES_PASSWORD = os.environ.get("SUPABASE_PASSWORD", "").strip()
+MAX_QUEUE_DATA_AGE_MINUTES = float(os.environ.get("MAX_QUEUE_DATA_AGE_MINUTES", "20"))
 
 
 def get_connection():
@@ -185,9 +186,12 @@ def queue_status():
                 "message": "Ainda não há dados da fila disponíveis.",
             }
 
-        # Verifica se a leitura é recente (menos de 20 minutos)
+        # Uma resposta HTTP 200 apenas significa que o banco respondeu. Dados
+        # antigos não podem continuar sendo anunciados como o estado atual da
+        # fila, pois isso induz o estudante a tomar uma decisão com base em uma
+        # captura que a câmera deixou de produzir.
         age_minutes = (datetime.utcnow() - row["captured_at"].replace(tzinfo=None)).total_seconds() / 60
-        is_stale = age_minutes > 20
+        is_stale = age_minutes > MAX_QUEUE_DATA_AGE_MINUTES
 
         # captured_at vem em UTC do banco; converte para o horário de
         # Recife (UTC-3) antes de devolver, para não confundir quem for
@@ -196,7 +200,7 @@ def queue_status():
         from datetime import timedelta
         captured_at_local = row["captured_at"].replace(tzinfo=None) - timedelta(hours=3)
 
-        return {
+        response = {
             "available":            True,
             "people_in_line":       row["people_in_line"],
             "status":               row["status"],
@@ -205,6 +209,24 @@ def queue_status():
             "is_stale":             is_stale,
             "age_minutes":          round(age_minutes, 1),
         }
+
+        if is_stale:
+            # Mantém a última leitura apenas para diagnóstico, fora dos campos
+            # que o frontend usa para montar o cartão de status atual.
+            return {
+                "available": False,
+                "is_stale": True,
+                "age_minutes": round(age_minutes, 1),
+                "captured_at": captured_at_local.isoformat(),
+                "message": "Dados da fila temporariamente indisponíveis: a última captura está desatualizada.",
+                "last_reading": {
+                    "people_in_line": row["people_in_line"],
+                    "status": row["status"],
+                    "waiting_time_minutes": row["waiting_time_minutes"],
+                },
+            }
+
+        return response
     except Exception as e:
         return {
             "available": False,

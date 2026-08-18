@@ -68,21 +68,32 @@ def capture_frame(rtsp_url: str) -> "cv2.typing.MatLike | None":
     except (TypeError, cv2.error):
         logger.warning("OpenCV sem suporte a timeouts RTSP na abertura; usando modo compatível.")
         cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-    if not cap.isOpened():
-        logger.error("Não foi possível conectar à câmera RTSP.")
-        return None
+    try:
+        if not cap.isOpened():
+            logger.error("Não foi possível conectar à câmera RTSP.")
+            return None
 
-    # Descarta alguns frames iniciais — o primeiro frame de um stream RTSP
-    # às vezes vem corrompido ou desatualizado (buffer antigo).
-    frame = None
-    for _ in range(5):
-        ret, frame = cap.read()
-        if not ret:
-            frame = None
-            break
+        # Descarta frames iniciais potencialmente antigos. Uma falha transitória
+        # não deve abortar imediatamente: retorna o último frame válido somente
+        # depois de conseguir leituras consecutivas do stream atual.
+        frame = None
+        valid_frames = 0
+        for _ in range(10):
+            ret, candidate = cap.read()
+            if not ret or candidate is None:
+                valid_frames = 0
+                continue
+            frame = candidate
+            valid_frames += 1
+            if valid_frames >= 5:
+                break
 
-    cap.release()
-    return frame
+        if valid_frames < 5:
+            logger.error("Stream RTSP não forneceu frames válidos suficientes.")
+            return None
+        return frame
+    finally:
+        cap.release()
 
 
 def send_to_api(frame, api_url: str) -> dict | None:
@@ -101,8 +112,12 @@ def send_to_api(frame, api_url: str) -> dict | None:
         files = {"file": ("captura.jpg", buffer.tobytes(), "image/jpeg")}
         response = requests.post(api_url, files=files, timeout=60)
         response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException:
+        payload = response.json()
+        if not isinstance(payload, dict):
+            logger.error("API retornou JSON em formato inesperado.")
+            return None
+        return payload
+    except (requests.exceptions.RequestException, ValueError):
         logger.exception("Erro ao chamar a API de análise")
         return None
 

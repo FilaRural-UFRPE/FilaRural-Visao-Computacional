@@ -70,12 +70,16 @@ class YoloONNX:
         return cropped, (left, top)
 
     def _preprocess(self, image: np.ndarray) -> np.ndarray:
-        """Redimensiona e normaliza a imagem para o formato do modelo."""
+        """Converte BGR para RGB, redimensiona e normaliza para o modelo."""
         h, w = image.shape[:2]
         scale = min(self.INPUT_WIDTH / w, self.INPUT_HEIGHT / h)
         new_w, new_h = int(w * scale), int(h * scale)
 
-        resized = cv2.resize(image, (new_w, new_h))
+        # cv2.imread devolve BGR, enquanto os modelos YOLO da Ultralytics são
+        # treinados/exportados esperando RGB. Manter BGR reduz sensivelmente a
+        # confiança e pode transformar uma fila cheia em zero detecções.
+        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        resized = cv2.resize(rgb_image, (new_w, new_h))
 
         # Padding para 640x640
         canvas = np.full((self.INPUT_HEIGHT, self.INPUT_WIDTH, 3), 114, dtype=np.uint8)
@@ -163,6 +167,17 @@ class YoloONNX:
             blob, scale, roi_size = self._preprocess(cropped)
             outputs = self.session.run(None, {self.input_name: blob})
             roi_detections = self._postprocess(outputs, scale, roi_size)
+
+            # O ROI melhora pessoas pequenas na área habitual da fila, porém a
+            # câmera pode mudar de posição ou a fila pode ocupar outra parte do
+            # quadro. Um resultado vazio dispara uma segunda inferência no
+            # frame completo para evitar publicar um falso zero.
+            if not roi_detections and cropped.shape[:2] != image.shape[:2]:
+                blob, scale, full_size = self._preprocess(image)
+                outputs = self.session.run(None, {self.input_name: blob})
+                self.detections = self._postprocess(outputs, scale, full_size)
+                self.roi_offset = (0, 0)
+                return 0
 
             # Converte as caixas de volta para coordenadas da imagem ORIGINAL,
             # somando o offset do recorte — importante para o save() desenhar

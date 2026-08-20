@@ -35,12 +35,29 @@ class YoloONNX:
     # modelo — sem precisar de um modelo maior ou mais RAM.
     #
     # Valores em porcentagem (0.0-1.0) da imagem original, calibrados a
-    # partir dos frames reais de teste. Ajustar aqui se a câmera for
-    # reposicionada ou o enquadramento mudar.
-    ROI_TOP    = float(os.environ.get("ROI_TOP_PCT", "0.45"))
-    ROI_BOTTOM = float(os.environ.get("ROI_BOTTOM_PCT", "1.0"))
-    ROI_LEFT   = float(os.environ.get("ROI_LEFT_PCT", "0.0"))
-    ROI_RIGHT  = float(os.environ.get("ROI_RIGHT_PCT", "1.0"))
+    # partir dos frames reais da câmera do RU (benchmark 2026-08-20).
+    # Este intervalo cobre a faixa da calçada onde a fila se forma.
+    # Ajustar aqui se a câmera for reposicionada ou o enquadramento mudar.
+    # Em produção com ângulo fixo, o scan multi-crop (abaixo) costuma
+    # renderizar melhor recall do que um ROI fixo.
+    ROI_TOP    = float(os.environ.get("ROI_TOP_PCT", "0.64"))
+    ROI_BOTTOM = float(os.environ.get("ROI_BOTTOM_PCT", "0.82"))
+    ROI_LEFT   = float(os.environ.get("ROI_LEFT_PCT", "0.20"))
+    ROI_RIGHT  = float(os.environ.get("ROI_RIGHT_PCT", "0.40"))
+
+    # --- Modo multi-crop (opcional, recomendado para produção) -------- #
+    # Quando ativado, o método .scan() varre a imagem inteira em tiles
+    # sobrepostos e funde as detecções via NMS, aumentando o recall de
+    # pessoas pequenas/distantes sem necessidade de aumentar o modelo.
+    # Ligar com: export YOLO_SCAN_MULTI_CROP=true
+    #
+    # Parâmetros de scan (pixels, relativos ao frame original):
+    SCAN_TILE_W    = int(os.environ.get("YOLO_SCAN_TILE_W", "640"))
+    SCAN_TILE_H    = int(os.environ.get("YOLO_SCAN_TILE_H", "640"))
+    SCAN_STEP_X    = int(os.environ.get("YOLO_SCAN_STEP_X", "320"))
+    SCAN_STEP_Y    = int(os.environ.get("YOLO_SCAN_STEP_Y", "320"))
+    SCAN_CONF      = float(os.environ.get("YOLO_SCAN_CONF", str(CONF_THRESHOLD)))
+    SCAN_NMS_IOU   = float(os.environ.get("YOLO_SCAN_NMS_IOU", str(NMS_THRESHOLD)))
 
     # Liga/desliga os prints de debug (confidências brutas) nos logs.
     # Deixado desligado por padrão para não poluir os logs em produção.
@@ -160,6 +177,12 @@ class YoloONNX:
 
             self.image = image
 
+            # Se scan multi-carpas está ativado, pula o ROI único e varre
+            # a imagem inteira (melhora recall de gente distante/pequena).
+            if os.environ.get("YOLO_SCAN_MULTI_CROP", "false").lower() == "true":
+                det = self.scan(image)
+                return 0
+
             # Recorta a região de interesse antes de mandar pro modelo
             cropped, offset = self._crop_roi(image)
             self.roi_offset = offset
@@ -214,4 +237,54 @@ class YoloONNX:
 
     def get_num_of_people(self) -> int:
         """Retorna o número de pessoas detectadas."""
+        return len(self.detections)
+
+    def scan(self, image: np.ndarray) -> int:
+        """Varre a imagem em tiles sobrepostos e funde as detecções via NMS.
+
+        Aumenta o recall de pessoas pequenas/distantes sem trocar o modelo.
+        Preenche self.detections em coordenadas da imagem original.
+        Define env YOLO_SCAN_MULTI_CROP=true para ativar (recomendado em
+        produção em servidor sem GPU, para melhorar detecções de gente
+        distante, ao custo de ~12 inferências por frame).
+        """
+        h, w = image.shape[:2]
+        tiles = []
+        x = 0
+        while True:
+            x1 = min(x + self.SCAN_TILE_W, w)
+            y = 0
+            while True:
+                y1 = min(y + self.SCAN_TILE_H, h)
+                tiles.append((x, y, x1, y1))
+                if y1 == h:
+                    break
+                y = min(y + self.SCAN_STEP_Y, max(1, h - (y1 - y)))
+                if y >= h:
+                    break
+            if x1 == w:
+                break
+            x = min(x + self.SCAN_STEP_X, max(1, w - (x1 - x)))
+            if x >= w:
+                break
+
+        candidates = []
+        for (x0, y0, x1, y1) in tiles:
+            tile = image[y0:y1, x0:x1]
+            blob, scale, tsize = self._preprocess(tile)
+            outputs = self.session.run(None, {self.input_name: blob})
+            for (dx1, dy1, dx2, dy2, conf) in self._postprocess(outputs, scale, tsize):
+                candidates.append((dx1 + x0, dy1 + y0, dx2 + x0, dy2 + y0, conf))
+
+        if not candidates:
+            self.detections = []
+            return 0
+
+        boxes = [[c[0], c[1], c[2] - c[0], c[3] - c[1]] for c in candidates]
+        scores = [c[4] for c in candidates]
+        try:
+            idx = cv2.dnn.NMSBoxes(boxes, scores, self.CONF_THRESHOLD, self.SCAN_NMS_IOU)
+        except Exception:
+            idx = []
+        self.detections = [candidates[i] for i in idx] if idx else []
         return len(self.detections)

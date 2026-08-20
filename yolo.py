@@ -13,18 +13,21 @@ class YoloONNX:
     INPUT_WIDTH  = 640
     INPUT_HEIGHT = 640
 
-    # Confirmado por testes reais com a câmera do RU: 0.1 recupera bem mais
-    # gente distante/pequena sem gerar falsos positivos em excesso (testado
-    # numa cena vazia: só 2 detecções, consideradas aceitáveis).
-    CONF_THRESHOLD = float(os.environ.get("YOLO_CONF_THRESHOLD", "0.1"))
+    # Confirmado por testes com frames reais da câmera do RU: 0.04 recupera
+    # ~37 pessoas no frame asd.jpg (esperado: 35-40) gerando ruído mínimo
+    # numa cena vazia (1 detecção, aceitável). O padrão antigo (0.1) subestimava
+    # fila cheia (pegava só 25 de 35-40). Ajustável via YOLO_CONF_THRESHOLD.
+    CONF_THRESHOLD = float(os.environ.get("YOLO_CONF_THRESHOLD", "0.04"))
     NMS_THRESHOLD  = 0.5  # threshold para Non-Maximum Suppression
     PERSON_CLASS   = 0    # classe 0 = pessoa no COCO dataset
 
-    # Confirmado por testes: a câmera Intelbras já corrige a orientação
-    # internamente (flip de firmware) mesmo estando fisicamente instalada de
-    # cabeça para baixo — o RTSP já chega certo. Rotação extra aqui só
-    # atrapalha. Mantido configurável caso a câmera/config mude no futuro.
-    ROTATE_DEGREES = int(os.environ.get("CAMERA_ROTATE_DEGREES", "0"))
+    # A câmera Intelbras está fisicamente instalada de cabeça para baixo.
+    # Embora o firmware possa corrigir a orientação internamente, os testes
+    # mostraram que a detecção YOLO falha sem a rotação explícita de 180°.
+    # A calibração ROI considera o chão na parte inferior da imagem; ao girar
+    # 180°, as detecções ficam corretas. Mantido configurável via
+    # CAMERA_ROTATE_DEGREES env var.
+    ROTATE_DEGREES = int(os.environ.get("CAMERA_ROTATE_DEGREES", "180"))
 
     # --- Região de interesse (ROI) ------------------------------------ #
     # A câmera tem lente fisheye/grande angular montada bem perto do teto:

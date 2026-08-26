@@ -13,11 +13,11 @@ class YoloONNX:
     INPUT_WIDTH  = 640
     INPUT_HEIGHT = 640
 
-    # Confirmado por testes com frames reais da câmera do RU: 0.04 recupera
-    # ~37 pessoas no frame asd.jpg (esperado: 35-40) gerando ruído mínimo
-    # numa cena vazia (1 detecção, aceitável). O padrão antigo (0.1) subestimava
-    # fila cheia (pegava só 25 de 35-40). Ajustável via YOLO_CONF_THRESHOLD.
-    CONF_THRESHOLD = float(os.environ.get("YOLO_CONF_THRESHOLD", "0.04"))
+    # Confirmado por testes com frames reais da câmera do RU: 0.07 com
+    # multi-crop atinge 88% de precisão média nos 3 cenários (começo/média/
+    # cheia), com mínimo de 72% no pior caso. Ajustável via
+    # YOLO_CONF_THRESHOLD.
+    CONF_THRESHOLD = float(os.environ.get("YOLO_CONF_THRESHOLD", "0.07"))
     NMS_THRESHOLD  = 0.5  # threshold para Non-Maximum Suppression
     PERSON_CLASS   = 0    # classe 0 = pessoa no COCO dataset
 
@@ -48,11 +48,11 @@ class YoloONNX:
     ROI_LEFT   = float(os.environ.get("ROI_LEFT_PCT", "0.20"))
     ROI_RIGHT  = float(os.environ.get("ROI_RIGHT_PCT", "0.40"))
 
-    # --- Modo multi-crop (opcional, recomendado para produção) -------- #
-    # Quando ativado, o método .scan() varre a imagem inteira em tiles
-    # sobrepostos e funde as detecções via NMS, aumentando o recall de
-    # pessoas pequenas/distantes sem necessidade de aumentar o modelo.
-    # Ligar com: export YOLO_SCAN_MULTI_CROP=true
+    # --- Modo multi-crop (padrão, recomendado para produção) --------- #
+    # Varre a imagem inteira em tiles sobrepostos e funde as detecções
+    # via NMS, aumentando o recall de pessoas pequenas/distantes sem
+    # necessidade de aumentar o modelo. Custo: ~12 inferências por frame.
+    # Desativar com: export YOLO_SCAN_MULTI_CROP=false
     #
     # Parâmetros de scan (pixels, relativos ao frame original):
     SCAN_TILE_W    = int(os.environ.get("YOLO_SCAN_TILE_W", "640"))
@@ -61,6 +61,16 @@ class YoloONNX:
     SCAN_STEP_Y    = int(os.environ.get("YOLO_SCAN_STEP_Y", "320"))
     SCAN_CONF      = float(os.environ.get("YOLO_SCAN_CONF", str(CONF_THRESHOLD)))
     SCAN_NMS_IOU   = float(os.environ.get("YOLO_SCAN_NMS_IOU", str(NMS_THRESHOLD)))
+
+    # --- Filtros pós-deteção (reduzem falsos positivos) ------------- #
+    # Mínimo de altura (em pixels da imagem original) para aceitar uma
+    # detecção. Pessoas reais nesta câmera têm ≥35px de altura; objetos
+    # menores são ruído do modelo. Desativar com MIN_PERSON_HEIGHT=0.
+    MIN_PERSON_HEIGHT = int(os.environ.get("MIN_PERSON_HEIGHT", "35"))
+    # Fração mínima da altura da imagem que o centro da detecção deve
+    # ocupar para ser aceito. 0.45 = detecções precisam estar na metade
+    # inferior (onde a calçada/fila fica). Desativar com WALKWAY_Y_PCT=0.
+    WALKWAY_Y_PCT = float(os.environ.get("WALKWAY_Y_PCT", "0.45"))
 
     # Liga/desliga os prints de debug (confidências brutas) nos logs.
     # Deixado desligado por padrão para não poluir os logs em produção.
@@ -151,7 +161,11 @@ class YoloONNX:
             return []
 
         # Non-Maximum Suppression
-        indices = cv2.dnn.NMSBoxes(boxes, scores, self.CONF_THRESHOLD, self.NMS_THRESHOLD)
+        nms_result = cv2.dnn.NMSBoxes(boxes, scores, self.CONF_THRESHOLD, self.NMS_THRESHOLD)
+        if isinstance(nms_result, tuple):
+            indices = nms_result[1]
+        else:
+            indices = nms_result
         detections = []
         for i in indices:
             x, y, w, h = boxes[i]
@@ -180,9 +194,10 @@ class YoloONNX:
 
             self.image = image
 
-            # Se scan multi-carpas está ativado, pula o ROI único e varre
-            # a imagem inteira (melhora recall de gente distante/pequena).
-            if os.environ.get("YOLO_SCAN_MULTI_CROP", "false").lower() == "true":
+            # Scan multi-crop é o padrão — varre a imagem inteira e melhora
+            # recall de gente distante/pequena. Desativar com
+            # YOLO_SCAN_MULTI_CROP=false.
+            if os.environ.get("YOLO_SCAN_MULTI_CROP", "true").lower() != "false":
                 det = self.scan(image)
                 return 0
 
@@ -247,9 +262,7 @@ class YoloONNX:
 
         Aumenta o recall de pessoas pequenas/distantes sem trocar o modelo.
         Preenche self.detections em coordenadas da imagem original.
-        Define env YOLO_SCAN_MULTI_CROP=true para ativar (recomendado em
-        produção em servidor sem GPU, para melhorar detecções de gente
-        distante, ao custo de ~12 inferências por frame).
+        Multi-crop é o padrão (desativar com YOLO_SCAN_MULTI_CROP=false).
         """
         h, w = image.shape[:2]
         tiles = []
@@ -286,8 +299,28 @@ class YoloONNX:
         boxes = [[c[0], c[1], c[2] - c[0], c[3] - c[1]] for c in candidates]
         scores = [c[4] for c in candidates]
         try:
-            idx = cv2.dnn.NMSBoxes(boxes, scores, self.CONF_THRESHOLD, self.SCAN_NMS_IOU)
+            nms_result = cv2.dnn.NMSBoxes(boxes, scores, self.CONF_THRESHOLD, self.SCAN_NMS_IOU)
+            if isinstance(nms_result, tuple):
+                idx = nms_result[1]
+            else:
+                idx = nms_result
         except Exception:
             idx = []
-        self.detections = [candidates[i] for i in idx] if idx else []
+        self.detections = [candidates[i] for i in idx] if len(idx) > 0 else []
+
+        # Filtros pós-deteção: removem falsos positivos (objetos, ruído)
+        # sem perder pessoas reais. O filtro de walkway ignora a parte
+        # superior da imagem (teto, árvores, prédio) onde a fila não fica.
+        if self.MIN_PERSON_HEIGHT > 0 or self.WALKWAY_Y_PCT > 0:
+            filtered = []
+            for (x1, y1, x2, y2, conf) in self.detections:
+                det_h = y2 - y1
+                cy = (y1 + y2) / 2.0
+                if self.MIN_PERSON_HEIGHT > 0 and det_h < self.MIN_PERSON_HEIGHT:
+                    continue
+                if self.WALKWAY_Y_PCT > 0 and cy < h * self.WALKWAY_Y_PCT:
+                    continue
+                filtered.append((x1, y1, x2, y2, conf))
+            self.detections = filtered
+
         return len(self.detections)

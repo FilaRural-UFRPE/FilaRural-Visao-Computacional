@@ -33,6 +33,16 @@ class YoloTests(unittest.TestCase):
         detector.roi_offset = (0, 0)
         detector.detections = []
         detector.input_name = "images"
+        detector.CONF_THRESHOLD = 0.07
+        detector.NMS_THRESHOLD = 0.5
+        detector.MIN_PERSON_HEIGHT = 35
+        detector.WALKWAY_Y_PCT = 0.45
+        detector.ROTATE_DEGREES = 0
+        detector.SCAN_TILE_W = 640
+        detector.SCAN_TILE_H = 640
+        detector.SCAN_STEP_X = 320
+        detector.SCAN_STEP_Y = 320
+        detector.SCAN_NMS_IOU = 0.5
         detector.session = Mock()
         detector.session.run.side_effect = ["roi-output", "full-output"]
         detector._crop_roi = Mock(return_value=(np.zeros((5, 10, 3)), (0, 5)))
@@ -41,7 +51,8 @@ class YoloTests(unittest.TestCase):
         detector._postprocess = Mock(side_effect=[[], full_detections])
 
         image = np.zeros((10, 10, 3), dtype=np.uint8)
-        with patch("yolo.cv2.imread", return_value=image):
+        with patch("yolo.cv2.imread", return_value=image), \
+             patch.dict("os.environ", {"YOLO_SCAN_MULTI_CROP": "false"}):
             result = detector.read("frame.jpg")
 
         self.assertEqual(result, 0)
